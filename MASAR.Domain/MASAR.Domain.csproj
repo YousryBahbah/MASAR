@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Entities\Enums\**" />
+    <EmbeddedResource Remove="Entities\Enums\**" />
+    <None Remove="Entities\Enums\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    
+    <PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>

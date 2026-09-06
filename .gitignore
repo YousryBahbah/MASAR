@@ -1,0 +1,32 @@
+## Visual Studio / Rider IDE folders
+.vs/
+.idea/
+*.user
+*.suo
+
+## Build outputs
+bin/
+obj/
+out/
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+
+## Publish artifacts
+**/Properties/PublishProfiles/*.pubxml.user
+publish/
+
+## NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+## Logs
+logs/
+*.log
+
+## User-specific / secret files — never commit real connection strings or keys
+appsettings.Local.json
+appsettings.*.local.json
+*.pfx
