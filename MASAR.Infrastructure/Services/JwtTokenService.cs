@@ -1,13 +1,13 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using MASAR.Application.Interfaces;
+using Masar.Application.Interfaces;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Masar.Api.Configuration;
+using Masar.Infrastructure.Options;
 using Masar.Domain.Entities;
 
-namespace Masar.Api.Services;
+namespace Masar.Infrastructure.Services;
 
 public class JwtTokenService : ITokenService
 {

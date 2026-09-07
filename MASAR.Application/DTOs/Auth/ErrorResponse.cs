@@ -1,4 +1,4 @@
-namespace Masar.Api.DTOs;
+namespace Masar.Application.DTOs;
 
 /// <summary>
 /// Standard error envelope used across the API, per the Step 2 locked

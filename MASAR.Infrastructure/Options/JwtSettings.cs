@@ -1,4 +1,4 @@
-namespace Masar.Api.Configuration;
+namespace Masar.Infrastructure.Options;
 
 /// <summary>
 /// Bound from the "Jwt" configuration section. Values come from

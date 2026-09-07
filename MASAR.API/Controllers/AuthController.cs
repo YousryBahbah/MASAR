@@ -1,5 +1,4 @@
-using Masar.Api.DTOs;
-using Masar.Api.DTOs.Auth;
+using Masar.Application.DTOs;
 using Masar.Application.DTOs.Auth;
 using Masar.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -52,6 +51,7 @@ public class AuthController : ControllerBase
         "INVALID_CREDENTIALS" => StatusCodes.Status401Unauthorized,
         "REGISTRATION_FAILED" => StatusCodes.Status400BadRequest,
         "ROLE_ASSIGNMENT_FAILED" => StatusCodes.Status500InternalServerError,
+        "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
         _ => StatusCodes.Status500InternalServerError
     };
 }

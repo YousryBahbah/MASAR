@@ -1,5 +1,5 @@
 using Masar.Domain.Entities;
-namespace MASAR.Application.Interfaces;
+namespace Masar.Application.Interfaces;
 
 public interface ITokenService
 {

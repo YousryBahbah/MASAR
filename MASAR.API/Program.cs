@@ -1,14 +1,12 @@
 using FluentValidation;
 using Hangfire;
-using Masar.Api.Configuration;
-using Masar.Api.Services;
-using Masar.Api.Validators.Auth;
+using Masar.Infrastructure.Options;
+using Masar.Application.Validators.Auth;
 using Masar.Application.Interfaces;
 using Masar.Domain.Entities;
 using Masar.Infrastructure.Persistence;
 using Masar.Infrastructure.Persistence.Seed;
 using Masar.Infrastructure.Services;
-using MASAR.Application.Interfaces;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;

@@ -1,9 +1,8 @@
-using Masar.Api.DTOs.Auth;
+using FluentValidation;
 using Masar.Application.DTOs.Auth;
 using Masar.Application.Interfaces;
 using Masar.Domain.Entities;
 using Masar.Domain.Enums;
-using MASAR.Application.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 
@@ -13,20 +12,33 @@ public class AuthService : IAuthService
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ITokenService _tokenService;
+    private readonly IValidator<RegisterRequest> _registerValidator;
+    private readonly IValidator<LoginRequest> _loginValidator;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         ITokenService tokenService,
+        IValidator<RegisterRequest> registerValidator,
+        IValidator<LoginRequest> loginValidator,
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _tokenService = tokenService;
+        _registerValidator = registerValidator;
+        _loginValidator = loginValidator;
         _logger = logger;
     }
 
     public async Task<AuthResult> RegisterAsync(RegisterRequest request)
     {
+        var validation = await _registerValidator.ValidateAsync(request);
+        if (!validation.IsValid)
+        {
+            var validationMessage = string.Join(" ", validation.Errors.Select(e => e.ErrorMessage));
+            return AuthResult.Failure("VALIDATION_FAILED", validationMessage);
+        }
+
         var existing = await _userManager.FindByEmailAsync(request.Email);
         if (existing is not null)
         {
@@ -72,6 +84,13 @@ public class AuthService : IAuthService
 
     public async Task<AuthResult> LoginAsync(LoginRequest request)
     {
+        var loginValidation = await _loginValidator.ValidateAsync(request);
+        if (!loginValidation.IsValid)
+        {
+            var validationMessage = string.Join(" ", loginValidation.Errors.Select(e => e.ErrorMessage));
+            return AuthResult.Failure("VALIDATION_FAILED", validationMessage);
+        }
+
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null || !user.IsActive)
         {

@@ -1,5 +1,3 @@
-using Masar.Api.DTOs.Auth;
-
 namespace Masar.Application.DTOs.Auth;
 
 public class AuthResult

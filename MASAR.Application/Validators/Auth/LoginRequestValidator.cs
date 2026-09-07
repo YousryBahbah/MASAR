@@ -1,7 +1,7 @@
 using FluentValidation;
-using Masar.Api.DTOs.Auth;
+using Masar.Application.DTOs.Auth;
 
-namespace Masar.Api.Validators.Auth;
+namespace Masar.Application.Validators.Auth;
 
 public class LoginRequestValidator : AbstractValidator<LoginRequest>
 {

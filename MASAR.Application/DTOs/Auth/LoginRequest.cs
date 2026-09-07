@@ -1,4 +1,4 @@
-namespace Masar.Api.DTOs.Auth;
+namespace Masar.Application.DTOs.Auth;
 
 public record LoginRequest(
     string Email,
