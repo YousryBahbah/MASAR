@@ -74,6 +74,12 @@ public partial class Program
         builder.Services.AddScoped<ITokenService, JwtTokenService>();
         builder.Services.AddScoped<IAuthService, AuthService>();
         builder.Services.AddScoped<ILocationService, LocationService>();
+        builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
+
+
+        //enums converter
+        builder.Services.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(options =>
+    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
         // JWT bearer authentication
         builder.Services.AddAuthentication(options =>
