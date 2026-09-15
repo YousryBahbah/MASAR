@@ -1,4 +1,5 @@
 using Masar.Application.DTOs;
+using Masar.Application.DTOs.Amenities;
 using Masar.Application.DTOs.Workspaces;
 using Masar.Application.Interfaces;
 using Masar.Domain.Enums;
@@ -13,10 +14,12 @@ namespace Masar.Api.Controllers;
 public class WorkspacesController : ControllerBase
 {
     private readonly IWorkspaceService _workspaceService;
+    private readonly IAmenityService _amenityService;
 
-    public WorkspacesController(IWorkspaceService workspaceService)
+    public WorkspacesController(IWorkspaceService workspaceService, IAmenityService amenityService)
     {
         _workspaceService = workspaceService;
+        _amenityService = amenityService;
     }
 
     [HttpPost]
@@ -91,6 +94,24 @@ public class WorkspacesController : ControllerBase
         return Ok(result.Response);
     }
 
+    // Lives here, not on AmenitiesController — the resource being
+    // modified is a workspace's amenity set, matching the plan's route
+    // (/api/workspaces/{id}/amenities), same WorkspaceManager/Admin
+    // restriction as the rest of workspace management.
+    [HttpPut("{id:int}/amenities")]
+    [Authorize(Roles = $"{Roles.WorkspaceManager},{Roles.Admin}")]
+    public async Task<IActionResult> UpdateAmenities(int id, UpdateWorkspaceAmenitiesRequest request)
+    {
+        var result = await _amenityService.UpdateWorkspaceAmenitiesAsync(id, request);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapAmenitiesErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
     private static int MapErrorCodeToStatus(string errorCode) => errorCode switch
     {
         "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
@@ -98,6 +119,17 @@ public class WorkspacesController : ControllerBase
         "LOCATION_NOT_FOUND" => StatusCodes.Status404NotFound,
         "LOCATION_INACTIVE" => StatusCodes.Status409Conflict,
         "WORKSPACE_NAME_ALREADY_EXISTS_IN_LOCATION" => StatusCodes.Status409Conflict,
+        _ => StatusCodes.Status500InternalServerError
+    };
+
+    // Separate from MapErrorCodeToStatus above: WORKSPACE_NOT_FOUND is
+    // shared with it, but AMENITY_NOT_FOUND is specific to this endpoint
+    // and doesn't belong in the workspace-CRUD mapping above.
+    private static int MapAmenitiesErrorCodeToStatus(string errorCode) => errorCode switch
+    {
+        "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
+        "WORKSPACE_NOT_FOUND" => StatusCodes.Status404NotFound,
+        "AMENITY_NOT_FOUND" => StatusCodes.Status404NotFound,
         _ => StatusCodes.Status500InternalServerError
     };
 }

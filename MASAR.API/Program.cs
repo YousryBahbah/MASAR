@@ -75,6 +75,7 @@ public partial class Program
         builder.Services.AddScoped<IAuthService, AuthService>();
         builder.Services.AddScoped<ILocationService, LocationService>();
         builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
+        builder.Services.AddScoped<IAmenityService, AmenityService>();
 
 
         //enums converter
