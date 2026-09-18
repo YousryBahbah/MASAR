@@ -26,6 +26,17 @@ public partial class Program
 
         // Add services to the container.
         builder.Services.AddControllers();
+        // [ApiController]'s default invalid-ModelState response uses
+        // ValidationProblemDetails, a different shape than this API's
+        // {code, message} convention. Every other endpoint validates via
+        // FluentValidation in the service layer and never hits this path
+        // anyway, so suppressing it here only changes behavior for query-
+        // bound endpoints like Search that rely on model binding itself
+        // failing (a malformed enum, a non-numeric page value).
+        builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
+        {
+            options.SuppressModelStateInvalidFilter = true;
+        });
 
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -76,6 +87,7 @@ public partial class Program
         builder.Services.AddScoped<ILocationService, LocationService>();
         builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
         builder.Services.AddScoped<IAmenityService, AmenityService>();
+        builder.Services.AddScoped<IWorkspaceSearchService, WorkspaceSearchService>();
 
 
         //enums converter

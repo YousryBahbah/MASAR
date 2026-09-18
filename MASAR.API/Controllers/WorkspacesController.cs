@@ -1,5 +1,6 @@
 using Masar.Application.DTOs;
 using Masar.Application.DTOs.Amenities;
+using Masar.Application.DTOs.Search;
 using Masar.Application.DTOs.Workspaces;
 using Masar.Application.Interfaces;
 using Masar.Domain.Enums;
@@ -15,11 +16,50 @@ public class WorkspacesController : ControllerBase
 {
     private readonly IWorkspaceService _workspaceService;
     private readonly IAmenityService _amenityService;
+    private readonly IWorkspaceSearchService _searchService;
 
-    public WorkspacesController(IWorkspaceService workspaceService, IAmenityService amenityService)
+    public WorkspacesController(
+        IWorkspaceService workspaceService,
+        IAmenityService amenityService,
+        IWorkspaceSearchService searchService)
     {
         _workspaceService = workspaceService;
         _amenityService = amenityService;
+        _searchService = searchService;
+    }
+
+    // Search is open to any authenticated user — the baseline [Authorize]
+    // above already covers this, deliberately not restricted to Member
+    // the way booking creation is (locked Step 10 plan: browsing and
+    // creating are different operations).
+    //
+    // Route is declared before {id:int} below only for readability —
+    // ASP.NET Core's route constraint means "search" never actually
+    // risks matching {id:int}, regardless of declaration order.
+    [HttpGet("search")]
+    public async Task<IActionResult> Search([FromQuery] WorkspaceSearchRequest request)
+    {
+        // [ApiController]'s automatic invalid-ModelState response uses a
+        // different envelope (ValidationProblemDetails) than the rest of
+        // this API's {code, message} convention. Program.cs suppresses
+        // that automatic filter globally so this check can return the
+        // same VALIDATION_FAILED envelope as everywhere else — this is
+        // what catches a malformed page/pageSize/type/amenityIds value,
+        // closing a gap flagged against the plan a few rounds back.
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(new ErrorResponse(
+                "VALIDATION_FAILED", "One or more query parameters are invalid."));
+        }
+
+        var result = await _searchService.SearchAsync(request);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapSearchErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
     }
 
     [HttpPost]
@@ -111,6 +151,15 @@ public class WorkspacesController : ControllerBase
 
         return Ok(result.Response);
     }
+
+    // Search only ever fails with VALIDATION_FAILED — no NOT_FOUND/409
+    // cases exist for it (locked Step 10 plan: no new error codes,
+    // empty results are a valid outcome, not an error).
+    private static int MapSearchErrorCodeToStatus(string errorCode) => errorCode switch
+    {
+        "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
+        _ => StatusCodes.Status500InternalServerError
+    };
 
     private static int MapErrorCodeToStatus(string errorCode) => errorCode switch
     {
