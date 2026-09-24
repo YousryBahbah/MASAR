@@ -3,4 +3,5 @@
   <Project Path="MASAR.Application/MASAR.Application.csproj" />
   <Project Path="MASAR.Domain/MASAR.Domain.csproj" />
   <Project Path="MASAR.Infrastructure/MASAR.Infrastructure.csproj" />
+  <Project Path="MASAR.IntegrationTests/MASAR.IntegrationTests.csproj" />
 </Solution>

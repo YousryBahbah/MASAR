@@ -88,6 +88,7 @@ public partial class Program
         builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
         builder.Services.AddScoped<IAmenityService, AmenityService>();
         builder.Services.AddScoped<IWorkspaceSearchService, WorkspaceSearchService>();
+        builder.Services.AddScoped<IBookingService, BookingService>();
 
 
         //enums converter
