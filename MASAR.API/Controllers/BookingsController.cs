@@ -23,11 +23,7 @@ public class BookingsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(CreateBookingRequest request)
     {
-        // ClaimTypes.NameIdentifier holds user.Id — set this way in
-        // JwtTokenService, confirmed there before use here. A Member can
-        // only book for themselves; there's no "userId" in the request
-        // body to trust instead.
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userId = GetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -36,19 +32,63 @@ public class BookingsController : ControllerBase
         var result = await _bookingService.CreateAsync(userId, request);
         if (!result.Succeeded)
         {
-            return StatusCode(MapErrorCodeToStatus(result.ErrorCode!),
+            return StatusCode(MapCreateErrorCodeToStatus(result.ErrorCode!),
                 new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
         }
 
         return StatusCode(StatusCodes.Status201Created, result.Response);
     }
 
+    [HttpPost("{id:int}/checkin")]
+    public async Task<IActionResult> CheckIn(int id)
+    {
+        var userId = GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _bookingService.CheckInAsync(userId, id);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapLifecycleErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
+    [HttpPost("{id:int}/cancel")]
+    public async Task<IActionResult> Cancel(int id)
+    {
+        var userId = GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _bookingService.CancelAsync(userId, id);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapLifecycleErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
+    // ClaimTypes.NameIdentifier holds user.Id — set this way in
+    // JwtTokenService, confirmed there before use here. A Member can
+    // only act on their own bookings; there's no "userId" in any
+    // request body or route to trust instead.
+    private string? GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier);
+
     // Mapping follows the settled Steps 11/12 convention: 400 = malformed
     // request shape (matches a real DB CHECK constraint); 422 = coherent
     // request impossible against the clock or fixed operating hours;
     // 409 = coherent request conflicting with a resource's routinely
     // mutable current state.
-    private static int MapErrorCodeToStatus(string errorCode) => errorCode switch
+    private static int MapCreateErrorCodeToStatus(string errorCode) => errorCode switch
     {
         "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
         "WORKSPACE_NOT_FOUND" => StatusCodes.Status404NotFound,
@@ -66,6 +106,23 @@ public class BookingsController : ControllerBase
         // same request later is expected to succeed, which is what 503
         // signals to a client, unlike a generic 500.
         "CONCURRENT_WRITE_CONFLICT" => StatusCodes.Status503ServiceUnavailable,
+        _ => StatusCodes.Status500InternalServerError
+    };
+
+    // Separate from MapCreateErrorCodeToStatus — CheckIn/Cancel have their
+    // own error codes (INVALID_BOOKING_STATUS, OUTSIDE_CHECKIN_WINDOW,
+    // BOOKING_NOT_FOUND) that don't belong mixed into the creation mapping.
+    private static int MapLifecycleErrorCodeToStatus(string errorCode) => errorCode switch
+    {
+        "BOOKING_NOT_FOUND" => StatusCodes.Status404NotFound,
+        // 409: the request is coherent and possible in principle, but
+        // conflicts with the booking's current (mutable) status — a
+        // different status entirely would make it succeed, same
+        // reasoning as every other 409 in this project.
+        "INVALID_BOOKING_STATUS" => StatusCodes.Status409Conflict,
+        // 422: impossible against the current clock specifically, not
+        // against the booking's status — same bucket as BOOKING_IN_PAST.
+        "OUTSIDE_CHECKIN_WINDOW" => StatusCodes.Status422UnprocessableEntity,
         _ => StatusCodes.Status500InternalServerError
     };
 }

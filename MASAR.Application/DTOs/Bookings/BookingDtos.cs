@@ -15,5 +15,12 @@ public record BookingResponse(
     DateOnly Date,
     TimeOnly StartTime,
     TimeOnly EndTime,
-    BookingStatus Status
+    BookingStatus Status,
+    // Raw UTC, unlike Date/StartTime/EndTime above — those represent the
+    // booking's intended Egypt-local wall-clock slot (worth converting
+    // back for the caller); this is an audit-style "this event happened
+    // at instant X" timestamp, same category as CreatedAt, where the
+    // instant itself is what matters, not a particular timezone's
+    // reading of it.
+    DateTime? CheckedInAt
 );

@@ -20,6 +20,15 @@ public class BookingService : IBookingService
     // them forever.
     private const int ActiveBookingLimit = 2;
 
+    // Public: BookingLifecycleJobs.SweepNoShowsAsync references this
+    // directly so the check-in window's upper bound and the no-show
+    // sweep's cutoff can never independently drift apart — see the
+    // Step 13 roadmap for the exact contradiction that caused
+    // ("EndTime as a stated upper bound was never actually reachable")
+    // when these were two separately-set values instead of one.
+    // Proposed value, not a locked business rule — see the roadmap.
+    public static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(3);
+
     private readonly ApplicationDbContext _db;
     private readonly IValidator<CreateBookingRequest> _validator;
     private readonly ILogger<BookingService> _logger;
@@ -158,7 +167,8 @@ public class BookingService : IBookingService
                 booking.Id, userId, workspace.Id);
 
             return Result<BookingResponse>.Success(new BookingResponse(
-                booking.Id, workspace.Id, workspace.Name, date, startTime, endTime, booking.Status));
+                booking.Id, workspace.Id, workspace.Name, date, startTime, endTime,
+                booking.Status, booking.CheckedInAt));
         }
         catch (Exception ex) when (IsDeadlock(ex))
         {
@@ -191,6 +201,161 @@ public class BookingService : IBookingService
                 "CONCURRENT_WRITE_CONFLICT",
                 "A temporary conflict occurred while processing this booking. Please try again.");
         }
+    }
+
+    public async Task<Result<BookingResponse>> CheckInAsync(string userId, int bookingId)
+    {
+        // Ownership filtered directly into the query, not checked after
+        // a plain-by-id lookup — a booking that exists but belongs to
+        // someone else and a booking that doesn't exist at all produce
+        // the exact same query result (no row) and the exact same error
+        // below, by construction, not by a separate comparison that
+        // could accidentally diverge. Same enumeration-avoidance
+        // reasoning as Auth's shared INVALID_CREDENTIALS.
+        var booking = await _db.Bookings
+            .Include(b => b.Workspace)
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.UserId == userId);
+
+        if (booking is null)
+        {
+            return Result<BookingResponse>.Failure("BOOKING_NOT_FOUND", "Booking not found.");
+        }
+
+        // 409: coherent request, but conflicts with this booking's
+        // current mutable status — check-in only makes sense from
+        // Confirmed. Already CheckedIn/Completed/Cancelled/NoShow all
+        // land here rather than getting their own distinct codes; the
+        // client doesn't need to know which wrong status it was in,
+        // only that check-in isn't valid from wherever it currently is.
+        if (booking.Status != BookingStatus.Confirmed)
+        {
+            return Result<BookingResponse>.Failure(
+                "INVALID_BOOKING_STATUS", "This booking cannot be checked into from its current status.");
+        }
+
+        var now = DateTime.UtcNow;
+        var windowStart = booking.StartTime - CheckInGracePeriod;
+        // Capped at EndTime, not just Start + CheckInGracePeriod — a
+        // booking shorter than the grace period (nothing currently rules
+        // this out) would otherwise accept a check-in after it already
+        // ended. Checking into something already over is incoherent
+        // regardless of how the 15-minute figure itself gets set later.
+        var windowEnd = booking.StartTime + CheckInGracePeriod < booking.EndTime
+            ? booking.StartTime + CheckInGracePeriod
+            : booking.EndTime;
+
+        // 422: impossible against the current clock specifically — the
+        // booking's status isn't the problem, its own StartTime/EndTime
+        // are, same bucket as BOOKING_IN_PAST at creation time.
+        if (now < windowStart || now >= windowEnd)
+        {
+            return Result<BookingResponse>.Failure(
+                "OUTSIDE_CHECKIN_WINDOW",
+                $"Check-in is only available within {CheckInGracePeriod.TotalMinutes:0} minutes of the booking's start time, and not after it has ended.");
+        }
+
+        // The actual state transition — a single conditional UPDATE, not
+        // load-then-SaveChanges. Everything above (existence, ownership,
+        // status, window) is an ordinary pre-check exactly like
+        // CreateAsync's maintenance/limit checks; only this specific
+        // write needs to be race-safe, because it's the one step
+        // competing directly against SweepNoShowsAsync, which can flip
+        // Confirmed -> NoShow at any instant with no coordination.
+        // Matching the WHERE clause's Status = Confirmed against the
+        // UPDATE itself (not just the earlier SELECT above) is what
+        // actually closes the race — a plain tracked-entity SaveChanges
+        // would generate `WHERE Id = X` with no status guard at all,
+        // and could silently overwrite whatever the sweep just wrote.
+        var rowsAffected = await _db.Bookings
+            .Where(b => b.Id == bookingId && b.UserId == userId && b.Status == BookingStatus.Confirmed)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(b => b.Status, BookingStatus.CheckedIn)
+                .SetProperty(b => b.CheckedInAt, now)
+                .SetProperty(b => b.UpdatedAt, now));
+        // CheckInMethod deliberately untouched here — this endpoint takes
+        // no QR token or other proof of method, so recording QR would be
+        // false. Left null rather than invented; add a real value once
+        // an actual check-in mechanism (QR or otherwise) exists to prove.
+
+        if (rowsAffected == 0)
+        {
+            // Lost the race: the pre-check above saw Confirmed, but
+            // something else (almost certainly the NoShow sweep landing
+            // at the same instant) changed it first. Same error code a
+            // straightforward wrong-status attempt gets — the caller
+            // doesn't need to know it was specifically a race.
+            return Result<BookingResponse>.Failure(
+                "INVALID_BOOKING_STATUS", "This booking cannot be checked into from its current status.");
+        }
+
+        _logger.LogInformation("Booking {BookingId} checked in by user {UserId}.", booking.Id, userId);
+
+        var (startDate, startLocal) = EgyptTime.FromUtc(booking.StartTime);
+        var (_, endLocal) = EgyptTime.FromUtc(booking.EndTime);
+
+        // Built from the values just written, not re-read from `booking`
+        // — ExecuteUpdateAsync bypasses the change tracker entirely, so
+        // the in-memory `booking` object still shows its pre-update
+        // Status/CheckedInAt (stale) rather than what's now actually in
+        // the database.
+        return Result<BookingResponse>.Success(new BookingResponse(
+            booking.Id, booking.WorkspaceId, booking.Workspace.Name,
+            startDate, startLocal, endLocal, BookingStatus.CheckedIn, now));
+    }
+
+    public async Task<Result<BookingResponse>> CancelAsync(string userId, int bookingId)
+    {
+        // Same ownership-filtered-into-the-query reasoning as CheckInAsync.
+        var booking = await _db.Bookings
+            .Include(b => b.Workspace)
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.UserId == userId);
+
+        if (booking is null)
+        {
+            return Result<BookingResponse>.Failure("BOOKING_NOT_FOUND", "Booking not found.");
+        }
+
+        // Confirmed -> Cancelled only — deliberately NOT allowed from
+        // CheckedIn (Step 13 roadmap). Once someone has actually shown
+        // up and checked in, "cancel" no longer describes what would be
+        // happening; that's a different, unmodeled operation, not a
+        // wider version of this one.
+        if (booking.Status != BookingStatus.Confirmed)
+        {
+            return Result<BookingResponse>.Failure(
+                "INVALID_BOOKING_STATUS", "This booking cannot be cancelled from its current status.");
+        }
+
+        var now = DateTime.UtcNow;
+
+        // Same atomic-conditional-UPDATE reasoning as CheckInAsync — this
+        // races against SweepNoShowsAsync exactly the same way (a user
+        // cancelling right as the sweep marks the same booking NoShow),
+        // so the same fix applies: the WHERE clause's Status = Confirmed
+        // has to be checked by the UPDATE itself, not just the read above.
+        var rowsAffected = await _db.Bookings
+            .Where(b => b.Id == bookingId && b.UserId == userId && b.Status == BookingStatus.Confirmed)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(b => b.Status, BookingStatus.Cancelled)
+                .SetProperty(b => b.UpdatedAt, now));
+
+        if (rowsAffected == 0)
+        {
+            return Result<BookingResponse>.Failure(
+                "INVALID_BOOKING_STATUS", "This booking cannot be cancelled from its current status.");
+        }
+
+        _logger.LogInformation("Booking {BookingId} cancelled by user {UserId}.", booking.Id, userId);
+
+        var (startDate, startLocal) = EgyptTime.FromUtc(booking.StartTime);
+        var (_, endLocal) = EgyptTime.FromUtc(booking.EndTime);
+
+        // CheckedInAt is guaranteed null here — only a booking that was
+        // still Confirmed at the moment of this write can reach this
+        // point, and a Confirmed booking has never been checked in.
+        return Result<BookingResponse>.Success(new BookingResponse(
+            booking.Id, booking.WorkspaceId, booking.Workspace.Name,
+            startDate, startLocal, endLocal, BookingStatus.Cancelled, null));
     }
 
     // SQL Server error 1205 = deadlock victim. May arrive as a bare

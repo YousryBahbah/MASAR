@@ -4,6 +4,7 @@ using Masar.Infrastructure.Options;
 using Masar.Application.Validators.Auth;
 using Masar.Application.Interfaces;
 using Masar.Domain.Entities;
+using Masar.Infrastructure.Jobs;
 using Masar.Infrastructure.Persistence;
 using Masar.Infrastructure.Persistence.Seed;
 using Masar.Infrastructure.Services;
@@ -89,6 +90,7 @@ public partial class Program
         builder.Services.AddScoped<IAmenityService, AmenityService>();
         builder.Services.AddScoped<IWorkspaceSearchService, WorkspaceSearchService>();
         builder.Services.AddScoped<IBookingService, BookingService>();
+        builder.Services.AddScoped<BookingLifecycleJobs>();
 
 
         //enums converter
@@ -186,6 +188,41 @@ public partial class Program
         {
             var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
             await RoleSeeder.SeedAsync(roleManager);
+        }
+
+        // Register recurring booking-lifecycle sweeps via IRecurringJobManager,
+        // resolved from DI — NOT the static RecurringJob.AddOrUpdate facade.
+        // The static facade only works if something has set the separate
+        // static JobStorage.Current global (the old GlobalConfiguration.Configuration
+        // pattern); this app configures Hangfire the modern way, through
+        // builder.Services.AddHangfire(...), which registers storage into the
+        // DI container's JobStorage service but does not also set that static
+        // global — so the static facade throws "please call IServiceCollection.AddHangfire...
+        // use IRecurringJobManager instead of RecurringJob" at runtime, which is
+        // Hangfire correctly identifying the mismatch, not a config bug.
+        //
+        // AddOrUpdate is itself idempotent (same "safe to run every startup"
+        // pattern as RoleSeeder above) and the schedule is persisted in the
+        // already-configured MASAR_Jobs SQL Server storage, so this survives
+        // an app restart without re-registering anything — restart recovery
+        // isn't a new problem this needs to solve, it's confirming
+        // infrastructure that's already wired does what it's supposed to.
+        //
+        // Every 5 minutes, proposed — not a locked business rule. See the
+        // Step 13 roadmap.
+        using (var scope = app.Services.CreateScope())
+        {
+            var recurringJobs = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+
+            recurringJobs.AddOrUpdate<BookingLifecycleJobs>(
+                "booking-noshow-sweep",
+                job => job.SweepNoShowsAsync(),
+                "*/5 * * * *");
+
+            recurringJobs.AddOrUpdate<BookingLifecycleJobs>(
+                "booking-completion-sweep",
+                job => job.SweepCompletionsAsync(),
+                "*/5 * * * *");
         }
 
         app.Run();
