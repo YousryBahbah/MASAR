@@ -27,7 +27,7 @@ public class BookingService : IBookingService
     // ("EndTime as a stated upper bound was never actually reachable")
     // when these were two separately-set values instead of one.
     // Proposed value, not a locked business rule — see the roadmap.
-    public static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(3);
+    public static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(15);
 
     private readonly ApplicationDbContext _db;
     private readonly IValidator<CreateBookingRequest> _validator;
