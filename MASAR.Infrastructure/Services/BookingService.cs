@@ -27,7 +27,7 @@ public class BookingService : IBookingService
     // ("EndTime as a stated upper bound was never actually reachable")
     // when these were two separately-set values instead of one.
     // Proposed value, not a locked business rule — see the roadmap.
-    public static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(3);
+    public static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(15);
 
     private readonly ApplicationDbContext _db;
     private readonly IValidator<CreateBookingRequest> _validator;
@@ -356,6 +356,83 @@ public class BookingService : IBookingService
         return Result<BookingResponse>.Success(new BookingResponse(
             booking.Id, booking.WorkspaceId, booking.Workspace.Name,
             startDate, startLocal, endLocal, BookingStatus.Cancelled, null));
+    }
+
+    public async Task<Result<BookingHistoryResponse>> GetMyBookingsAsync(string userId, BookingHistoryRequest request)
+    {
+        // page/pageSize are clamped, not rejected — same distinction
+        // WorkspaceSearchService draws (Step 10): a bad locationId or
+        // amenityId is a typo worth surfacing as VALIDATION_FAILED,
+        // but an out-of-range page number just means "there's nothing
+        // there," which a clamped default already expresses correctly
+        // without a hard error.
+        var page = request.Page <= 0 ? 1 : request.Page;
+        var pageSize = request.PageSize <= 0 ? 20 : Math.Min(request.PageSize, 50);
+
+        // Same overflow-safe skip as WorkspaceSearchService — (page-1)*
+        // pageSize can overflow plain int for a very large page number,
+        // and Skip() only accepts int, so this is computed in long and
+        // clamped back rather than risking a wrapped negative OFFSET.
+        var skipLong = (long)(page - 1) * pageSize;
+        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
+
+        var query = _db.Bookings.Where(b => b.UserId == userId);
+
+        if (request.Status.HasValue)
+        {
+            query = query.Where(b => b.Status == request.Status.Value);
+        }
+
+        var totalCount = await query.CountAsync();
+
+        // Most recent StartTime first — the natural read order for a
+        // history view (upcoming bookings near the top, older ones
+        // further down), not the Id-ascending order Search uses (where
+        // insertion order doesn't matter to the caller the way a
+        // booking's own timing does). Id descending as a tiebreaker for
+        // two bookings with the exact same StartTime, same "OFFSET/
+        // FETCH NEXT needs a fully deterministic ORDER BY" reasoning as
+        // Step 10.
+        var bookings = await query
+            .Include(b => b.Workspace)
+            .OrderByDescending(b => b.StartTime)
+            .ThenByDescending(b => b.Id)
+            .Skip(skip)
+            .Take(pageSize)
+            .ToListAsync();
+
+        var items = bookings.Select(b =>
+        {
+            var (date, start) = EgyptTime.FromUtc(b.StartTime);
+            var (_, end) = EgyptTime.FromUtc(b.EndTime);
+            return new BookingResponse(
+                b.Id, b.WorkspaceId, b.Workspace.Name, date, start, end, b.Status, b.CheckedInAt);
+        }).ToList();
+
+        return Result<BookingHistoryResponse>.Success(
+            new BookingHistoryResponse(items, page, pageSize, totalCount));
+    }
+
+    public async Task<Result<BookingResponse>> GetByIdAsync(string userId, int bookingId)
+    {
+        // Same ownership-filtered-into-the-query reasoning as
+        // CheckInAsync/CancelAsync — not-found and not-yours must be
+        // indistinguishable to the caller.
+        var booking = await _db.Bookings
+            .Include(b => b.Workspace)
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.UserId == userId);
+
+        if (booking is null)
+        {
+            return Result<BookingResponse>.Failure("BOOKING_NOT_FOUND", "Booking not found.");
+        }
+
+        var (date, start) = EgyptTime.FromUtc(booking.StartTime);
+        var (_, end) = EgyptTime.FromUtc(booking.EndTime);
+
+        return Result<BookingResponse>.Success(new BookingResponse(
+            booking.Id, booking.WorkspaceId, booking.Workspace.Name,
+            date, start, end, booking.Status, booking.CheckedInAt));
     }
 
     // SQL Server error 1205 = deadlock victim. May arrive as a bare

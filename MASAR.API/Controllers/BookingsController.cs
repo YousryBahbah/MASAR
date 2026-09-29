@@ -77,6 +77,60 @@ public class BookingsController : ControllerBase
         return Ok(result.Response);
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetMyBookings([FromQuery] BookingHistoryRequest request)
+    {
+        // Same gap Search closed a few rounds back, now closed here too —
+        // [ApiController]'s automatic invalid-ModelState response is a
+        // different envelope (ValidationProblemDetails) than this API's
+        // {code, message} convention, and Program.cs's global suppression
+        // of that filter means this check is what actually catches a
+        // malformed ?status=/?page=/?pageSize= value. Without it, a typo
+        // like ?status=Blah would silently be ignored as "no filter"
+        // instead of erroring — a quieter failure mode than the rest of
+        // this API, and inconsistent with Search handling the identical
+        // mistake class right next to it.
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(new ErrorResponse(
+                "VALIDATION_FAILED", "One or more query parameters are invalid."));
+        }
+
+        var userId = GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _bookingService.GetMyBookingsAsync(userId, request);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapLifecycleErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetById(int id)
+    {
+        var userId = GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _bookingService.GetByIdAsync(userId, id);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapLifecycleErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
     // ClaimTypes.NameIdentifier holds user.Id — set this way in
     // JwtTokenService, confirmed there before use here. A Member can
     // only act on their own bookings; there's no "userId" in any

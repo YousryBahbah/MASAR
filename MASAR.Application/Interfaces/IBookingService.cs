@@ -17,4 +17,19 @@ public interface IBookingService
     Task<Result<BookingResponse>> CheckInAsync(string userId, int bookingId);
 
     Task<Result<BookingResponse>> CancelAsync(string userId, int bookingId);
+
+    // Step 14 — a Member's own booking history. Self-scoped only: no
+    // "view another user's bookings" path exists here or anywhere else
+    // yet. That's deliberately deferred to Step 15 (Admin & Platform
+    // Management), not built implicitly by loosening this method's
+    // filter — see the Step 13-17 roadmap's own reasoning for keeping
+    // this step Member-only rather than splitting one concern's
+    // authorization logic across two steps.
+    Task<Result<BookingHistoryResponse>> GetMyBookingsAsync(string userId, BookingHistoryRequest request);
+
+    // Same not-found/not-yours -> BOOKING_NOT_FOUND pattern as
+    // CheckInAsync/CancelAsync above — a booking that exists but isn't
+    // the caller's own is indistinguishable from one that doesn't
+    // exist at all.
+    Task<Result<BookingResponse>> GetByIdAsync(string userId, int bookingId);
 }
