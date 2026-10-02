@@ -51,3 +51,32 @@ public record BookingHistoryResponse(
     int PageSize,
     int TotalCount
 );
+
+public class BookingManagementRequest
+{
+    public BookingStatus? Status { get; set; }
+    public string? UserId { get; set; }
+    public int? WorkspaceId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
+}
+
+public record ManagedBookingResponse(
+    int Id,
+    string UserId,
+    string UserEmail,
+    int WorkspaceId,
+    string WorkspaceName,
+    DateOnly Date,
+    TimeOnly StartTime,
+    TimeOnly EndTime,
+    BookingStatus Status,
+    DateTime? CheckedInAt
+);
+
+public record BookingManagementResponse(
+    List<ManagedBookingResponse> Items,
+    int Page,
+    int PageSize,
+    int TotalCount
+);

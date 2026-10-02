@@ -11,6 +11,8 @@ namespace Masar.Infrastructure.Services;
 
 public class JwtTokenService : ITokenService
 {
+    public const string SecurityStampClaimType = "security_stamp";
+
     private readonly JwtSettings _settings;
 
     public JwtTokenService(IOptions<JwtSettings> settings)
@@ -30,6 +32,7 @@ public class JwtTokenService : ITokenService
             new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new(ClaimTypes.NameIdentifier, user.Id),
+            new(SecurityStampClaimType, user.SecurityStamp ?? string.Empty),
             new("firstName", user.FirstName),
             new("lastName", user.LastName)
         };

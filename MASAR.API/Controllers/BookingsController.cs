@@ -10,7 +10,13 @@ namespace Masar.Api.Controllers;
 
 [ApiController]
 [Route("api/bookings")]
-[Authorize(Roles = Roles.Member)] // Member-only, per the Step 2 recap — unchanged
+// Class-level [Authorize] means "any logged-in user" ONLY. Roles are set per
+// action because this controller mixes Member endpoints and a management
+// endpoint, and stacked [Authorize(Roles=...)] attributes are ANDed — a
+// class-level Member requirement would lock managers/admins out of
+// /management. CONSEQUENCE: every new action here MUST carry its own
+// [Authorize(Roles = ...)], or it is open to every authenticated account.
+[Authorize]
 public class BookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
@@ -21,8 +27,19 @@ public class BookingsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> Create(CreateBookingRequest request)
     {
+        // Program.cs suppresses [ApiController]'s automatic invalid-ModelState
+        // 400, so a body that fails to bind (malformed JSON, empty body,
+        // wrong Content-Type) arrives here as null. Without this guard it
+        // would surface as a 500 from a null dereference deeper down.
+        if (!ModelState.IsValid || request is null)
+        {
+            return BadRequest(new ErrorResponse(
+                "VALIDATION_FAILED", "Request body is missing or malformed."));
+        }
+
         var userId = GetUserId();
         if (userId is null)
         {
@@ -40,6 +57,7 @@ public class BookingsController : ControllerBase
     }
 
     [HttpPost("{id:int}/checkin")]
+    [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> CheckIn(int id)
     {
         var userId = GetUserId();
@@ -59,6 +77,7 @@ public class BookingsController : ControllerBase
     }
 
     [HttpPost("{id:int}/cancel")]
+    [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> Cancel(int id)
     {
         var userId = GetUserId();
@@ -78,6 +97,7 @@ public class BookingsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> GetMyBookings([FromQuery] BookingHistoryRequest request)
     {
         // Same gap Search closed a few rounds back, now closed here too —
@@ -113,6 +133,7 @@ public class BookingsController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> GetById(int id)
     {
         var userId = GetUserId();
@@ -125,6 +146,26 @@ public class BookingsController : ControllerBase
         if (!result.Succeeded)
         {
             return StatusCode(MapLifecycleErrorCodeToStatus(result.ErrorCode!),
+                new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
+        }
+
+        return Ok(result.Response);
+    }
+
+    [HttpGet("management")]
+    [Authorize(Roles = $"{Roles.WorkspaceManager},{Roles.Admin}")]
+    public async Task<IActionResult> GetForManagement([FromQuery] BookingManagementRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(new ErrorResponse(
+                "VALIDATION_FAILED", "One or more query parameters are invalid."));
+        }
+
+        var result = await _bookingService.GetForManagementAsync(request);
+        if (!result.Succeeded)
+        {
+            return StatusCode(MapManagementErrorCodeToStatus(result.ErrorCode!),
                 new ErrorResponse(result.ErrorCode!, result.ErrorMessage!));
         }
 
@@ -177,6 +218,12 @@ public class BookingsController : ControllerBase
         // 422: impossible against the current clock specifically, not
         // against the booking's status — same bucket as BOOKING_IN_PAST.
         "OUTSIDE_CHECKIN_WINDOW" => StatusCodes.Status422UnprocessableEntity,
+        _ => StatusCodes.Status500InternalServerError
+    };
+
+    private static int MapManagementErrorCodeToStatus(string errorCode) => errorCode switch
+    {
+        "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
         _ => StatusCodes.Status500InternalServerError
     };
 }

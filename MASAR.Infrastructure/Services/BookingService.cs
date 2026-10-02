@@ -394,6 +394,7 @@ public class BookingService : IBookingService
         // FETCH NEXT needs a fully deterministic ORDER BY" reasoning as
         // Step 10.
         var bookings = await query
+            .AsNoTracking()
             .Include(b => b.Workspace)
             .OrderByDescending(b => b.StartTime)
             .ThenByDescending(b => b.Id)
@@ -419,6 +420,7 @@ public class BookingService : IBookingService
         // CheckInAsync/CancelAsync — not-found and not-yours must be
         // indistinguishable to the caller.
         var booking = await _db.Bookings
+            .AsNoTracking()
             .Include(b => b.Workspace)
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.UserId == userId);
 
@@ -433,6 +435,86 @@ public class BookingService : IBookingService
         return Result<BookingResponse>.Success(new BookingResponse(
             booking.Id, booking.WorkspaceId, booking.Workspace.Name,
             date, start, end, booking.Status, booking.CheckedInAt));
+    }
+
+    public async Task<Result<BookingManagementResponse>> GetForManagementAsync(
+        BookingManagementRequest request)
+    {
+        if (request.WorkspaceId is <= 0)
+        {
+            return Result<BookingManagementResponse>.Failure(
+                "VALIDATION_FAILED", "workspaceId must be a positive integer.");
+        }
+
+        var page = request.Page <= 0 ? 1 : request.Page;
+        var pageSize = request.PageSize <= 0 ? 20 : Math.Min(request.PageSize, 50);
+        var skipLong = (long)(page - 1) * pageSize;
+        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
+
+        var query = _db.Bookings.AsQueryable();
+
+        if (request.Status.HasValue)
+        {
+            query = query.Where(b => b.Status == request.Status.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.UserId))
+        {
+            query = query.Where(b => b.UserId == request.UserId);
+        }
+
+        if (request.WorkspaceId.HasValue)
+        {
+            query = query.Where(b => b.WorkspaceId == request.WorkspaceId.Value);
+        }
+
+        var totalCount = await query.CountAsync();
+
+        // Projected, not Include(b => b.User): this only needs the member's
+        // email, and loading whole ApplicationUser rows would pull password
+        // hashes, security stamps and the rest of the Identity columns into
+        // memory for no reason. Read-only, so no change tracking either.
+        // EgyptTime.FromUtc can't be translated to SQL, so the local-time
+        // conversion happens in memory after the projected rows come back.
+        var rows = await query
+            .AsNoTracking()
+            .OrderByDescending(b => b.StartTime)
+            .ThenByDescending(b => b.Id)
+            .Skip(skip)
+            .Take(pageSize)
+            .Select(b => new
+            {
+                b.Id,
+                b.UserId,
+                UserEmail = b.User.Email,
+                b.WorkspaceId,
+                WorkspaceName = b.Workspace.Name,
+                b.StartTime,
+                b.EndTime,
+                b.Status,
+                b.CheckedInAt
+            })
+            .ToListAsync();
+
+        var items = rows.Select(row =>
+        {
+            var (date, start) = EgyptTime.FromUtc(row.StartTime);
+            var (_, end) = EgyptTime.FromUtc(row.EndTime);
+            return new ManagedBookingResponse(
+                row.Id,
+                row.UserId,
+                row.UserEmail ?? string.Empty,
+                row.WorkspaceId,
+                row.WorkspaceName,
+                date,
+                start,
+                end,
+                row.Status,
+                row.CheckedInAt);
+        }).ToList();
+
+        return Result<BookingManagementResponse>.Success(
+            new BookingManagementResponse(items, page, pageSize, totalCount));
     }
 
     // SQL Server error 1205 = deadlock victim. May arrive as a bare

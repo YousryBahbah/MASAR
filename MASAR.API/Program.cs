@@ -90,6 +90,8 @@ public partial class Program
         builder.Services.AddScoped<IAmenityService, AmenityService>();
         builder.Services.AddScoped<IWorkspaceSearchService, WorkspaceSearchService>();
         builder.Services.AddScoped<IBookingService, BookingService>();
+        builder.Services.AddScoped<IAdminService, AdminService>();
+        builder.Services.AddScoped<IMaintenancePeriodService, MaintenancePeriodService>();
         builder.Services.AddScoped<BookingLifecycleJobs>();
 
 
@@ -117,6 +119,26 @@ public partial class Program
              Encoding.UTF8.GetBytes(jwtSettings.SigningKey)),
          ValidateLifetime = true,
          ClockSkew = TimeSpan.FromSeconds(30)
+     };
+
+     options.Events = new JwtBearerEvents
+     {
+         OnTokenValidated = async context =>
+         {
+             var userId = context.Principal?
+                 .FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+             var userManager = context.HttpContext.RequestServices
+                 .GetRequiredService<UserManager<ApplicationUser>>();
+             var user = userId is null ? null : await userManager.FindByIdAsync(userId);
+             var tokenSecurityStamp = context.Principal?
+                 .FindFirst(JwtTokenService.SecurityStampClaimType)?.Value;
+
+             if (user is null || !user.IsActive ||
+                 !string.Equals(tokenSecurityStamp, user.SecurityStamp, StringComparison.Ordinal))
+             {
+                 context.Fail("This token is no longer valid for the current account state.");
+             }
+         }
      };
  });
 

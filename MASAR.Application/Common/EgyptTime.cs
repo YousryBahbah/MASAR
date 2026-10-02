@@ -10,6 +10,18 @@ public static class EgyptTime
     private static readonly TimeZoneInfo Zone =
         TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo");
 
+    // Egypt observes DST, so a spring-forward night has a wall-clock hour
+    // that never exists (e.g. 00:30 on the night clocks jump 00:00 -> 01:00).
+    // ConvertTimeToUtc THROWS for such a time, which would surface as a 500.
+    // Validators call this first so it becomes a clean 400 VALIDATION_FAILED.
+    // Ambiguous times (the repeated hour when clocks fall back) are valid:
+    // ConvertTimeToUtc resolves them using the standard offset.
+    public static bool IsValidLocalTime(DateOnly date, TimeOnly time)
+    {
+        var local = date.ToDateTime(time, DateTimeKind.Unspecified);
+        return !Zone.IsInvalidTime(local);
+    }
+
     // Built for Step 10/11 — Egypt-local date+time (as sent by a caller)
     // to the UTC DateTime actually stored on a row.
     public static DateTime ToUtc(DateOnly date, TimeOnly time)

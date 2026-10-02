@@ -32,4 +32,6 @@ public interface IBookingService
     // the caller's own is indistinguishable from one that doesn't
     // exist at all.
     Task<Result<BookingResponse>> GetByIdAsync(string userId, int bookingId);
+
+    Task<Result<BookingManagementResponse>> GetForManagementAsync(BookingManagementRequest request);
 }
