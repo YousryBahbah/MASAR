@@ -25,8 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Used by the existing BookingConcurrencyTests (real MASAR_DB). -->
-    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  
     <!-- Used by every new test. Deliberately NOT named appsettings.json:
          referencing MASAR.API copies the API's own appsettings.json into this
          project's output folder, which would silently replace this file. -->
