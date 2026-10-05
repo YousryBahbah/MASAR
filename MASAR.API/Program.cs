@@ -1,5 +1,6 @@
 using FluentValidation;
 using Hangfire;
+using Masar.Api.ExceptionHandling;
 using Masar.Infrastructure.Options;
 using Masar.Application.Validators.Auth;
 using Masar.Application.Interfaces;
@@ -27,17 +28,30 @@ public partial class Program
 
         // Add services to the container.
         builder.Services.AddControllers();
-        // [ApiController]'s default invalid-ModelState response uses
-        // ValidationProblemDetails, a different shape than this API's
-        // {code, message} convention. Every other endpoint validates via
-        // FluentValidation in the service layer and never hits this path
-        // anyway, so suppressing it here only changes behavior for query-
-        // bound endpoints like Search that rely on model binding itself
-        // failing (a malformed enum, a non-numeric page value).
+        // Step 16 — one central answer for "the request could not be bound"
+        // (empty body, malformed JSON, a bad enum/TimeOnly/DateOnly value,
+        // a missing required property), in this API's {code, message}
+        // envelope. Previously the automatic filter was suppressed and each
+        // action had to remember its own ModelState guard; controllers
+        // without one (Auth, Locations, Amenities, Workspaces.Create) let a
+        // null body reach FluentValidation and fail as a 500.
+        //
+        // SuppressMapClientErrors: a bare NotFound()/Unauthorized() result
+        // would otherwise be rewritten into ProblemDetails (a third error
+        // shape). With it suppressed those stay empty, and the status-code
+        // middleware below fills them with the same {code, message} body.
         builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
         {
-            options.SuppressModelStateInvalidFilter = true;
+            options.InvalidModelStateResponseFactory = ApiErrorResponses.InvalidModelState;
+            options.SuppressMapClientErrors = true;
         });
+
+        // Step 16 — global exception handling. AddProblemDetails is what
+        // lets UseExceptionHandler() work without an explicit path; our
+        // handler always claims the exception, so no ProblemDetails body
+        // is ever actually written.
+        builder.Services.AddProblemDetails();
+        builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -136,8 +150,36 @@ public partial class Program
              if (user is null || !user.IsActive ||
                  !string.Equals(tokenSecurityStamp, user.SecurityStamp, StringComparison.Ordinal))
              {
+                 // Step 16 — security-relevant event. Logs the user id and a
+                 // coarse reason only; never the token or its claims.
+                 var reason = user is null ? "user not found"
+                     : !user.IsActive ? "account inactive"
+                     : "security stamp mismatch";
+                 context.HttpContext.RequestServices
+                     .GetRequiredService<ILoggerFactory>()
+                     .CreateLogger("Masar.Authentication")
+                     .LogWarning("Rejected a valid-signature token for user {UserId}: {Reason}.", userId, reason);
+
                  context.Fail("This token is no longer valid for the current account state.");
              }
+         },
+         OnAuthenticationFailed = context =>
+         {
+             // Exception TYPE only. Message text from token validation can
+             // embed fragments of the token, which must never be logged.
+             //
+             // An expired token is the ordinary end of every session, so it
+             // is Information; anything else (bad signature, wrong issuer,
+             // malformed) is worth a Warning.
+             var level = context.Exception is SecurityTokenExpiredException
+                 ? LogLevel.Information
+                 : LogLevel.Warning;
+
+             context.HttpContext.RequestServices
+                 .GetRequiredService<ILoggerFactory>()
+                 .CreateLogger("Masar.Authentication")
+                 .Log(level, "JWT authentication failed: {ExceptionType}.", context.Exception.GetType().Name);
+             return Task.CompletedTask;
          }
      };
  });
@@ -162,6 +204,38 @@ public partial class Program
         builder.Services.AddHangfireServer();
 
         var app = builder.Build();
+
+        // Step 16 — request logging first, so every request (including ones
+        // the exception handler turns into a 500) gets one structured line
+        // with method, path, status and elapsed time. Query strings and
+        // headers are not logged. UserId/TraceId are attached as properties
+        // so a log line can be tied to a user and to the Reference id a 500
+        // response carries.
+        app.UseSerilogRequestLogging(options =>
+        {
+            options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+            {
+                diagnosticContext.Set("TraceId", httpContext.TraceIdentifier);
+
+                var userId = httpContext.User
+                    .FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (userId is not null)
+                {
+                    diagnosticContext.Set("UserId", userId);
+                }
+            };
+        });
+
+        // Step 16 — must wrap everything below it (auth, routing,
+        // controllers) so an exception from any of them becomes the
+        // standard {code, message} response.
+        app.UseExceptionHandler();
+
+        // Step 16 — empty 401/403/404/405 responses (JWT challenge,
+        // authorization failure, unknown route) get the same envelope as
+        // every other error. Responses that already have a body are left
+        // untouched.
+        app.UseStatusCodePages(StatusCodeResponses.WriteAsync);
 
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())

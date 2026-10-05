@@ -171,8 +171,12 @@ public class AdminService : IAdminService
             return Result<AdminUserResponse>.Success(
                 ToResponse(user, requestedRoles.OrderBy(name => name, StringComparer.Ordinal).ToList()));
         }
-        catch (Exception exception) when (IsDeadlock(exception))
+        catch (Exception exception) when (SqlServerErrors.IsDeadlock(exception))
         {
+            _logger.LogWarning(exception,
+                "Deadlock detected changing roles of user {TargetUserId} (admin {ActorUserId}).",
+                targetUserId, actorUserId);
+
             return Result<AdminUserResponse>.Failure(
                 "CONCURRENT_ADMIN_CHANGE", "A concurrent administrative update occurred. Please try again.");
         }
@@ -272,8 +276,12 @@ public class AdminService : IAdminService
 
             return Result<AdminUserResponse>.Success(ToResponse(user, currentRoles.ToList()));
         }
-        catch (Exception exception) when (IsDeadlock(exception))
+        catch (Exception exception) when (SqlServerErrors.IsDeadlock(exception))
         {
+            _logger.LogWarning(exception,
+                "Deadlock detected {Action} user {TargetUserId} (admin {ActorUserId}).",
+                isActive ? "activating" : "deactivating", targetUserId, actorUserId);
+
             return Result<AdminUserResponse>.Failure(
                 "CONCURRENT_ADMIN_CHANGE", "A concurrent administrative update occurred. Please try again.");
         }
@@ -304,16 +312,4 @@ public class AdminService : IAdminService
         return activeAdminCount <= 1;
     }
 
-    private static bool IsDeadlock(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is Microsoft.Data.SqlClient.SqlException { Number: 1205 })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }

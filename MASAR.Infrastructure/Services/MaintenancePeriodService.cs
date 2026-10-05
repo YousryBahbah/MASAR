@@ -214,7 +214,7 @@ public class MaintenancePeriodService : IMaintenancePeriodService
         var listed = string.Join(", ", ids.Take(MaxConflictIdsListed));
         var more = ids.Count > MaxConflictIdsListed ? " and more" : string.Empty;
         return $"This maintenance period overlaps active bookings (booking ids: {listed}{more}). " +
-               "Resolve or cancel those bookings first.";
+               "Those bookings must be cancelled by their owners before maintenance can be scheduled.";
     }
 
     private static MaintenancePeriodResponse ToResponse(MaintenancePeriod period, string workspaceName)

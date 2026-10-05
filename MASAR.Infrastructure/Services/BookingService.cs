@@ -112,12 +112,14 @@ public class BookingService : IBookingService
                 "MAINTENANCE_CONFLICT", "Workspace is under maintenance during this time.");
         }
 
-        // 409, ordinary pre-check, not inside the transaction — see the
-        // locked Step 12 scope decision and its named same-user race.
-        var activeBookingCount = await _db.Bookings.CountAsync(b =>
-            b.UserId == userId
-            && (b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.CheckedIn)
-            && b.EndTime > DateTime.UtcNow);
+        // 409, cheap pre-check outside the transaction — fails fast for
+        // the common "already at the limit" case without opening a
+        // SERIALIZABLE transaction. NOT sufficient on its own: two
+        // concurrent requests from the same user can both pass this
+        // check. The authoritative re-check is inside the transaction
+        // below (Step 3's critical-operation flow: conflict check, THEN
+        // limits, THEN insert — all inside SERIALIZABLE).
+        var activeBookingCount = await CountActiveBookingsAsync(userId);
 
         if (activeBookingCount >= ActiveBookingLimit)
         {
@@ -126,11 +128,13 @@ public class BookingService : IBookingService
                 "You have reached the maximum number of active bookings.");
         }
 
-        // Concurrency boundary — SERIALIZABLE, scoped to only the
-        // overlap re-check and the insert. This is the flagship
-        // scenario: two Members racing for the exact same slot. See the
-        // locked Step 12 plan for why this scope is deliberately
-        // narrower than an earlier, wider version.
+        // Concurrency boundary — SERIALIZABLE, scoped to the overlap
+        // re-check, the active-booking-limit re-check, and the insert.
+        // Flagship scenario: two Members racing for the exact same slot.
+        // Second scenario (Step 17 requirement): one Member racing
+        // against themselves across different workspaces to exceed the
+        // limit. The maintenance pre-check above remains an ordinary
+        // pre-check, as before.
         try
         {
             await using var transaction =
@@ -146,6 +150,23 @@ public class BookingService : IBookingService
                 await transaction.RollbackAsync();
                 return Result<BookingResponse>.Failure(
                     "WORKSPACE_UNAVAILABLE", "This workspace is already booked for the requested time.");
+            }
+
+            // Authoritative limit check. Under SERIALIZABLE, the range
+            // this count reads is protected until commit, so two
+            // concurrent bookings from the same user (even on different
+            // workspaces) cannot both read "below the limit" and both
+            // insert: one is forced to wait or becomes a deadlock victim,
+            // which the 1205 catch below reports as
+            // CONCURRENT_WRITE_CONFLICT. At most ActiveBookingLimit
+            // bookings can ever be active for a user.
+            var activeInTransaction = await CountActiveBookingsAsync(userId);
+            if (activeInTransaction >= ActiveBookingLimit)
+            {
+                await transaction.RollbackAsync();
+                return Result<BookingResponse>.Failure(
+                    "ACTIVE_BOOKING_LIMIT_EXCEEDED",
+                    "You have reached the maximum number of active bookings.");
             }
 
             var booking = new Booking
@@ -170,7 +191,7 @@ public class BookingService : IBookingService
                 booking.Id, workspace.Id, workspace.Name, date, startTime, endTime,
                 booking.Status, booking.CheckedInAt));
         }
-        catch (Exception ex) when (IsDeadlock(ex))
+        catch (Exception ex) when (SqlServerErrors.IsDeadlock(ex))
         {
             // Genuine SQL Server deadlock (error 1205), not a business
             // conflict. This exact "read a range under SERIALIZABLE,
@@ -234,20 +255,17 @@ public class BookingService : IBookingService
         }
 
         var now = DateTime.UtcNow;
-        var windowStart = booking.StartTime - CheckInGracePeriod;
-        // Capped at EndTime, not just Start + CheckInGracePeriod — a
-        // booking shorter than the grace period (nothing currently rules
-        // this out) would otherwise accept a check-in after it already
-        // ended. Checking into something already over is incoherent
-        // regardless of how the 15-minute figure itself gets set later.
-        var windowEnd = booking.StartTime + CheckInGracePeriod < booking.EndTime
-            ? booking.StartTime + CheckInGracePeriod
-            : booking.EndTime;
 
         // 422: impossible against the current clock specifically — the
         // booking's status isn't the problem, its own StartTime/EndTime
         // are, same bucket as BOOKING_IN_PAST at creation time.
-        if (now < windowStart || now >= windowEnd)
+        //
+        // The window rule itself — [Start - Grace, min(Start + Grace, End))
+        // — lives in CheckInWindow so it can be unit-tested without a
+        // database. The upper bound is capped at EndTime so a booking
+        // shorter than the grace period can never be checked into after
+        // it has already ended.
+        if (!CheckInWindow.IsOpen(now, booking.StartTime, booking.EndTime, CheckInGracePeriod))
         {
             return Result<BookingResponse>.Failure(
                 "OUTSIDE_CHECKIN_WINDOW",
@@ -517,38 +535,15 @@ public class BookingService : IBookingService
             new BookingManagementResponse(items, page, pageSize, totalCount));
     }
 
-    // SQL Server error 1205 = deadlock victim. May arrive as a bare
-    // SqlException (e.g. from a query outside SaveChanges) or wrapped in
-    // DbUpdateException.InnerException (from SaveChanges itself) — check
-    // both shapes rather than assuming which one a given failure takes.
-    // Walks the FULL exception chain looking for SQL Server error 1205
-    // (deadlock victim), rather than matching a fixed nesting shape.
-    // A real run surfaced a third layer this didn't originally account
-    // for: EF Core's default (non-retrying) execution strategy wraps a
-    // transient-looking failure — deadlocks included — in its own
-    // InvalidOperationException on top of DbUpdateException on top of
-    // the actual SqlException. Matching only "bare SqlException" or
-    // "DbUpdateException wrapping SqlException" missed this real case.
-    // Walking .InnerException generically, rather than hardcoding a
-    // specific depth, means this doesn't need to be revisited again if
-    // EF Core or the SQL client adds yet another wrapper layer later.
-    //
-    // Do NOT "fix" this by adding EnableRetryOnFailure() to UseSqlServer
-    // instead, even though that's what the wrapped exception's own
-    // message suggests — EF Core's retrying execution strategy explicitly
-    // refuses to run inside a manually-managed transaction like this
-    // SERIALIZABLE one, and retries were already deliberately kept out
-    // of v1's scope (Step 3E).
-    private static bool IsDeadlock(Exception ex)
+    // "Active" = Confirmed/CheckedIn AND not yet ended. One definition,
+    // used by both the pre-check and the in-transaction re-check so the
+    // two can never drift apart.
+    private Task<int> CountActiveBookingsAsync(string userId)
     {
-        for (var current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is Microsoft.Data.SqlClient.SqlException { Number: 1205 })
-            {
-                return true;
-            }
-        }
-
-        return false;
+        var nowUtc = DateTime.UtcNow;
+        return _db.Bookings.CountAsync(b =>
+            b.UserId == userId
+            && (b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.CheckedIn)
+            && b.EndTime > nowUtc);
     }
 }

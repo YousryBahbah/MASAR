@@ -23,12 +23,6 @@ public class AdminController : ControllerBase
     [HttpGet("users")]
     public async Task<IActionResult> GetUsers([FromQuery] AdminUserListRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "One or more query parameters are invalid."));
-        }
-
         var result = await _adminService.GetUsersAsync(request);
         return ToActionResult(result);
     }
@@ -43,16 +37,6 @@ public class AdminController : ControllerBase
     [HttpPut("users/{id}/roles")]
     public async Task<IActionResult> UpdateRoles(string id, UpdateUserRolesRequest request)
     {
-        // Program.cs suppresses [ApiController]'s automatic invalid-ModelState
-        // 400, so a body that fails to bind (malformed JSON, empty body,
-        // wrong Content-Type) arrives here as null. Without this guard it
-        // would surface as a 500 from a null dereference deeper down.
-        if (!ModelState.IsValid || request is null)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "Request body is missing or malformed."));
-        }
-
         var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (actorUserId is null)
         {

@@ -30,16 +30,6 @@ public class BookingsController : ControllerBase
     [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> Create(CreateBookingRequest request)
     {
-        // Program.cs suppresses [ApiController]'s automatic invalid-ModelState
-        // 400, so a body that fails to bind (malformed JSON, empty body,
-        // wrong Content-Type) arrives here as null. Without this guard it
-        // would surface as a 500 from a null dereference deeper down.
-        if (!ModelState.IsValid || request is null)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "Request body is missing or malformed."));
-        }
-
         var userId = GetUserId();
         if (userId is null)
         {
@@ -100,22 +90,6 @@ public class BookingsController : ControllerBase
     [Authorize(Roles = Roles.Member)]
     public async Task<IActionResult> GetMyBookings([FromQuery] BookingHistoryRequest request)
     {
-        // Same gap Search closed a few rounds back, now closed here too —
-        // [ApiController]'s automatic invalid-ModelState response is a
-        // different envelope (ValidationProblemDetails) than this API's
-        // {code, message} convention, and Program.cs's global suppression
-        // of that filter means this check is what actually catches a
-        // malformed ?status=/?page=/?pageSize= value. Without it, a typo
-        // like ?status=Blah would silently be ignored as "no filter"
-        // instead of erroring — a quieter failure mode than the rest of
-        // this API, and inconsistent with Search handling the identical
-        // mistake class right next to it.
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "One or more query parameters are invalid."));
-        }
-
         var userId = GetUserId();
         if (userId is null)
         {
@@ -156,12 +130,6 @@ public class BookingsController : ControllerBase
     [Authorize(Roles = $"{Roles.WorkspaceManager},{Roles.Admin}")]
     public async Task<IActionResult> GetForManagement([FromQuery] BookingManagementRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "One or more query parameters are invalid."));
-        }
-
         var result = await _bookingService.GetForManagementAsync(request);
         if (!result.Succeeded)
         {

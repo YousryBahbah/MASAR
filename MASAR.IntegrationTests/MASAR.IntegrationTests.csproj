@@ -11,18 +11,26 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\MASAR.API\MASAR.API.csproj" />
     <ProjectReference Include="..\MASAR.Infrastructure\MASAR.Infrastructure.csproj" />
     <ProjectReference Include="..\MASAR.Application\MASAR.Application.csproj" />
     <ProjectReference Include="..\MASAR.Domain\MASAR.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Used by the existing BookingConcurrencyTests (real MASAR_DB). -->
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Used by every new test. Deliberately NOT named appsettings.json:
+         referencing MASAR.API copies the API's own appsettings.json into this
+         project's output folder, which would silently replace this file. -->
+    <None Include="testsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

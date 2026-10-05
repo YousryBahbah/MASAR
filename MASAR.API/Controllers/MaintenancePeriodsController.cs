@@ -23,16 +23,6 @@ public class MaintenancePeriodsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(CreateMaintenancePeriodRequest request)
     {
-        // Program.cs suppresses [ApiController]'s automatic invalid-ModelState
-        // 400, so a body that fails to bind (malformed JSON, empty body,
-        // wrong Content-Type) arrives here as null. Without this guard it
-        // would surface as a 500 from a null dereference deeper down.
-        if (!ModelState.IsValid || request is null)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "Request body is missing or malformed."));
-        }
-
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId is null)
         {
@@ -78,16 +68,6 @@ public class MaintenancePeriodsController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, UpdateMaintenancePeriodRequest request)
     {
-        // Program.cs suppresses [ApiController]'s automatic invalid-ModelState
-        // 400, so a body that fails to bind (malformed JSON, empty body,
-        // wrong Content-Type) arrives here as null. Without this guard it
-        // would surface as a 500 from a null dereference deeper down.
-        if (!ModelState.IsValid || request is null)
-        {
-            return BadRequest(new ErrorResponse(
-                "VALIDATION_FAILED", "Request body is missing or malformed."));
-        }
-
         var result = await _maintenancePeriodService.UpdateAsync(id, request);
         if (!result.Succeeded)
         {

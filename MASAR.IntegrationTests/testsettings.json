@@ -1,0 +1,5 @@
+{
+  "ConnectionStrings": {
+    "TestConnection": "Server=YOUSRY-BAHBAH\\SQLEXPRESS;Database=MASAR_TestDb;Trusted_Connection=True;TrustServerCertificate=True;"
+  }
+}

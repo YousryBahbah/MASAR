@@ -60,35 +60,53 @@ public class BookingLifecycleJobs
     // why these two can't be allowed to drift into different values.
     public async Task SweepNoShowsAsync()
     {
-        var cutoff = DateTime.UtcNow - BookingService.CheckInGracePeriod;
-        var now = DateTime.UtcNow;
-
-        var affected = await _db.Bookings
-            .Where(b => b.Status == BookingStatus.Confirmed && b.StartTime <= cutoff)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(b => b.Status, BookingStatus.NoShow)
-                .SetProperty(b => b.UpdatedAt, now));
-
-        if (affected > 0)
+        try
         {
-            _logger.LogInformation("Marked {Count} booking(s) as NoShow.", affected);
+            var cutoff = DateTime.UtcNow - BookingService.CheckInGracePeriod;
+            var now = DateTime.UtcNow;
+
+            var affected = await _db.Bookings
+                .Where(b => b.Status == BookingStatus.Confirmed && b.StartTime <= cutoff)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(b => b.Status, BookingStatus.NoShow)
+                    .SetProperty(b => b.UpdatedAt, now));
+
+            if (affected > 0)
+            {
+                _logger.LogInformation("Marked {Count} booking(s) as NoShow.", affected);
+            }
+        }
+        catch (Exception exception)
+        {
+            // Logged here with job context, then rethrown so Hangfire still
+            // records the failure and applies its normal retry policy.
+            _logger.LogError(exception, "Background job {JobName} failed.", nameof(SweepNoShowsAsync));
+            throw;
         }
     }
 
     // CheckedIn, past EndTime -> Completed.
     public async Task SweepCompletionsAsync()
     {
-        var now = DateTime.UtcNow;
-
-        var affected = await _db.Bookings
-            .Where(b => b.Status == BookingStatus.CheckedIn && b.EndTime < now)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(b => b.Status, BookingStatus.Completed)
-                .SetProperty(b => b.UpdatedAt, now));
-
-        if (affected > 0)
+        try
         {
-            _logger.LogInformation("Marked {Count} booking(s) as Completed.", affected);
+            var now = DateTime.UtcNow;
+
+            var affected = await _db.Bookings
+                .Where(b => b.Status == BookingStatus.CheckedIn && b.EndTime < now)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(b => b.Status, BookingStatus.Completed)
+                    .SetProperty(b => b.UpdatedAt, now));
+
+            if (affected > 0)
+            {
+                _logger.LogInformation("Marked {Count} booking(s) as Completed.", affected);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Background job {JobName} failed.", nameof(SweepCompletionsAsync));
+            throw;
         }
     }
 }
